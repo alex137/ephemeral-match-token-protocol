@@ -1,109 +1,263 @@
 # Ephemeral Match Token Protocol (EMTP)
 
-**EMTP** is a privacy-preserving convention for two parties to determine whether they are referring to the **same person** without exchanging raw identifiers.
+**EMTP** is a small, privacy-preserving convention for letting multiple parties determine whether they are referring to the **same person** *without sharing raw identifiers* (name, DOB, address, phone, etc.).
 
-Each party locally normalizes demographic inputs into a set of **identifier tuple variants**, computes **HMAC-based ephemeral tokens** using rotating keys, and shares only the resulting tokens.  
-A third-party **Key Server** distributes rotating HMAC keys to credentialed participants and can revoke access for misuse.
+It works by having participants compute **rotating HMAC-based match tokens** from common identifier tuples using **time-limited shared keys** distributed by a trusted **Key Server**. Parties exchange only tokens (not demographics). Matches are computed locally by set intersection.
 
-EMTP is designed to:
-- enable **matchability without central demographic storage**
-- avoid creation of a persistent global identifier
-- support **collision reduction** by allowing optional identifier suffixes (e.g., last4/last5) without typing them as SSN/DL/etc.
-- be transport-agnostic (tokens can be exchanged via **STP**, message buses, files, APIs, etc.)
-
----
-
-## Quick example
-
-Input demographic data (local only):
-
-```json
-{
-  "name": "MR. JRR TOlkein",
-  "dob": "1892-01-03",
-  "phones": ["+1 (212) 555-1212"],
-  "addresses": ["20 Northmoor Rd, Oxford, UK"],
-  "id_numbers": ["12345", "987654"]
-}
-```
-
-Token generation produces a set like:
-
-```
-HMAC(key_current, tuple_variant_1)
-HMAC(key_current, tuple_variant_2)
-...
-HMAC(key_prior, tuple_variant_1)
-...
-```
-
-Only these tokens are shared; the Key Server and any registry **never receive demographics**.
+EMTP is designed to be:
+- **Ephemeral:** tokens rotate (e.g., monthly) and do not become a persistent identifier
+- **Privacy-preserving:** the key server never receives demographics; registries can store only tokens
+- **Fault-tolerant:** variants handle messy real-world identity strings
+- **Standardizable:** a shared algorithm + test vectors enables interop across ecosystems
 
 ---
 
-## Why EMTP (vs fixed hashes / plaintext identifiers)
+## TL;DR
 
-- **Plain identifiers** (name/DOB/address) are sensitive and linkable
-- **Fixed hashes** are vulnerable to dictionary attacks and become de facto identifiers
-- **Rotating HMAC keys** make tokens *ephemeral* and resistant to reverse-mapping
-- **Key access control** enables a privacy circuit-breaker (revocation)
+1. A **Key Server** publishes rotating HMAC keys to **credentialed participants**.
+2. Each participant canonicalizes a person’s identifiers into multiple **normalized variants**.
+3. The participant computes a **set of HMAC tokens** over those variants for **current + prior keys**.
+4. Parties exchange tokens (e.g., via STP tables, files, APIs).
+5. A match is determined by local intersection of token sets.
+
+**No party needs to reveal raw identity data to another party** to discover matches.
+
+---
+
+## Why EMTP?
+
+Identity matching is everywhere:
+- healthcare (patient matching)
+- finance (KYC / fraud / AML)
+- insurance (claims)
+- travel (loyalty / passenger identity)
+- consumer platforms (account linking)
+- research + RWE (recruitment, longitudinal linkage)
+
+Today, most matching requires sending raw PII to a counterparty or a central broker.
+
+**EMTP provides a middle path:** *match without disclosure*, using short-lived keyed tokens that are useless outside the rotation window.
+
+---
+
+## Threat Model (high level)
+
+EMTP aims to prevent:
+- A registry or broker from becoming a permanent “national identifier” database
+- Token reuse across time (tracking / correlation)
+- Reverse-mapping tokens back to demographics (without possession of keys and large auxiliary datasets)
+- Untrusted entities from mass-producing tokens (access is credentialed)
+
+EMTP does **not** magically eliminate all risks:
+- Key leakage compromises the window of tokens derived from those keys
+- Small candidate sets can still enable inference attacks
+- Organizations must still follow privacy law and minimization norms
+
+EMTP’s design is about making the *default* behavior safer and harder to abuse.
 
 ---
 
 ## Core Concepts
 
-### 1) Inputs → Tuple Variants (normalization)
-Implementations normalize and expand inputs into multiple variants to increase match likelihood across messy real-world data:
-
-- names: casing, punctuation removal, spacing, initials collapse/expansion
-- honorific removal ("Mr", "Ms", "Dr") and suffix parsing ("Jr", "Sr", "IV")
-- phone normalization (E.164 variants)
-- address normalization (tokenized/abbrev variants)
-
-### 2) Optional identifier suffixes (`id_numbers`)
-To reduce collisions, participants MAY include `id_numbers`: strings containing **4+ digits** representing suffixes of any identifier (SSN, DL, member ID, account ID, national ID, etc.).
-
-Identifier types MUST be ignored; only digit suffixes are used.
-
-For each `id_numbers` entry:
-- extract the longest contiguous digit sequence of length ≥ 4
-- generate:
-  - `id4:<last4>`
-  - `id5:<last5>` (if ≥ 5 digits)
-- and SHOULD generate:
-  - `id6:<last6>` (if ≥ 6 digits)
-
-Tokens that include `id5` or `id6` SHOULD be treated as higher-confidence than demographic-only matches.
-
-### 3) Ephemeral HMAC tokens (rotating keys)
-Tokens are computed as:
+### Match Token
+A match token is an HMAC of a canonicalized identifier tuple variant:
 
 ```
-token = HMAC(key, canonical_tuple_bytes)
+token = HMAC(key, tuple_variant_bytes)
 ```
 
-Keys rotate on a fixed cadence (e.g., monthly) with overlap windows (e.g., current + prior).  
-Participants compute tokens with both keys to maintain continuity across rotations.
+Tokens are represented as lowercase hex strings.
+
+### Tuple Variant
+A tuple variant is one normalized combination of:
+- **name**
+- **date_of_birth**
+- **address**
+- **phone**
+- **id_numbers** *(optional: last4/last5/last6 digits of any IDs)*
+
+Because real-world data is messy, each field expands into multiple variants.
+
+### Rotating Keys
+Keys are rotated on a fixed cadence (e.g., monthly) with overlap windows:
+- participants compute tokens using **current + prior** keys
+- matching remains continuous across rotation
+- tokens are not stable identifiers over time
 
 ---
 
-## Key Server (distribution + revocation)
-The Key Server provides:
-- authenticated key distribution to credentialed participants
-- key rotation cadence
-- revocation / misuse circuit-breaker
+## Key Server (Protocol Overview)
 
-See `docs/key-server.md`.
+A Key Server MUST provide:
+- **Key distribution endpoint** (authenticated; credentialed participants only)
+- **Key schedule** (rotation cadence, overlap rules)
+- **Key identifiers** (key_id) included in responses
+- **Revocation mechanism** (cut off key access for abusive participants)
+- **Auditability** (key issuance logs at the server side)
+
+Recommended:
+- rotate monthly (or weekly in high-risk environments)
+- include at least **current + prior** keys in each response
+- publish clear norms for how long prior keys remain valid for matching
+
+### Example distribution response (illustrative)
+
+```json
+{
+  "schema": "emtp_keys_v1",
+  "issued_at": "2026-01-01T00:00:00Z",
+  "keys": [
+    {"key_id": "2026-01", "hmac_key_b64": "....", "not_before": "...", "not_after": "..."},
+    {"key_id": "2025-12", "hmac_key_b64": "....", "not_before": "...", "not_after": "..."}
+  ]
+}
+```
+
+> **Important:** The Key Server never receives demographics. Participants request keys, then compute tokens locally.
 
 ---
 
-## Docs
+## Canonicalization and Variant Expansion
 
-- `docs/spec.md` — full protocol spec
-- `docs/normalization.md` — recommended normalization + tuple variants
-- `docs/key-server.md` — key server behavior and endpoints
-- `examples/` — reference inputs + expected token counts
-- `test-vectors/` — deterministic vectors for interop
+EMTP’s effectiveness comes from canonicalization + variants.
+
+### Names
+
+Real inputs can look like:
+- `"MR. JRR TOlkein"`
+- `"John R. R. Tolkien Sr"`
+- `"J. R. R. Tolkien"`
+- `"Tolkien, John Ronald Reuel"`
+
+EMTP handles this by:
+1. **Lowercasing**
+2. Removing punctuation
+3. Removing or ignoring common **honorifics** (mr, mrs, dr, prof, etc.)
+4. Collapsing whitespace
+5. Recognizing and separating **suffixes** (jr, sr, ii, iii, iv, v)
+6. Generating variants such as:
+   - full first name vs initial
+   - with/without middle names
+   - with/without suffix
+   - “last, first” vs “first last” normalization
+
+**Suffix parsing is required** because it is a critical disambiguator.
+
+> Why keep suffix separate? Because a single freeform name field may include it, and the library must standardize it.
+
+### DOB
+DOB must normalize to ISO: `YYYY-MM-DD`.
+Variants may include:
+- full DOB
+- year-only (optional, controlled by policy)
+- month+year (optional)
+
+### Phone
+Normalize to E.164 when possible.
+Variants may include:
+- last 4 digits (optional; policy-controlled)
+- stripped digits only
+
+### Address
+Canonicalize using:
+- uppercase/lowercase normalization
+- street suffix normalization (st/street)
+- unit/apartment normalization
+- ZIP truncation (5-digit vs 9-digit)
+
+### ID Numbers (optional)
+EMTP supports a generic `id_numbers` field containing **digits** from any identifier source (SSN, driver license, passport fragments, member IDs, etc.) without requiring type tags.
+
+From any supplied digit string, EMTP derives variants:
+- last4
+- last5
+- last6 *(optional)*
+
+This allows disambiguation when two people share name + DOB + address.
+
+> Many workflows request **last5** (common in healthcare). Supporting last4/last5/last6 provides flexibility without standardizing every ID format.
+
+---
+
+## Collision Handling
+
+It is possible for two distinct individuals to collide (e.g., family members sharing address and DOB).
+
+EMTP is designed so collisions can be resolved by:
+- including additional tuple fields (phone, id_numbers fragments)
+- using higher-quality input normalization
+- applying policy: if multiple matches, require user confirmation or stronger identifiers
+
+Collisions are not catastrophic—they are surfaced for resolution rather than silently producing false certainty.
+
+---
+
+## Using EMTP with STP (Recommended)
+
+EMTP is transport-agnostic. Tokens can be exchanged via:
+- STP tables
+- files
+- APIs
+- message queues
+
+But STP is a natural fit:
+- STP provides a minimal, auditable streaming table format
+- EMTP tokens become the “Record” field value(s)
+
+Example STP row:
+
+```
+[SeqNo] \t [TS] \t + \t [Endpoint_URL] \t [token1 token2 token3 ...]
+```
+
+---
+
+## Reference Implementation
+
+This repo contains:
+- **Spec** describing canonicalization + token generation
+- **Schemas** for key distribution + token sets
+- **Test vectors** to ensure interoperability
+- **Reference code** (planned / in progress) in one or more languages
+
+See:
+- `docs/spec.md`
+- `schemas/`
+- `test_vectors/`
+
+---
+
+## Design Goals
+
+EMTP is optimized for:
+- **privacy** (no raw PII exchange)
+- **interoperability** (shared normalization + test vectors)
+- **rotation** (ephemeral tokens)
+- **auditability** (deterministic functions, reproducible results)
+- **practicality** (works with messy data)
+
+---
+
+## Non-Goals
+
+EMTP is *not*:
+- a full identity proofing system
+- a substitute for legal consent / authorization
+- a guarantee of uniqueness
+- a cryptographic multi-party computation protocol
+
+It is a pragmatic standard for safer matching.
+
+---
+
+## Contributing
+
+PRs welcome. High-impact contributions:
+- additional locale-aware normalization rules
+- reference implementations (Go, Python, JS)
+- better address canonicalization strategies
+- expanded test vectors (edge cases, international names)
+- key server operational guidance
 
 ---
 
