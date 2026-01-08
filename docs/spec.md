@@ -1,90 +1,85 @@
-# EMTP Core Spec (v1)
+# EMTP Specification (v0.3)
 
-## Overview
+## 1. Overview
+EMTP enables privacy-preserving person matching by sharing ephemeral HMAC tokens derived from normalized identifier tuples.
 
-EMTP defines:
-1) how a **Key Server** distributes a rotating set of HMAC keys to authorized participants
-2) how clients canonicalize + expand identifiers into **tuple variants**
-3) how clients compute a **set of HMAC tokens** for matching
+Participants:
+- **normalize** demographics and optional identifier suffixes into tuple variants
+- **compute tokens** using rotating HMAC keys from a Key Server
+- **share tokens** (never demographics) via any transport
 
-The registry/server never receives demographics and never stores a stable identifier.
+## 2. Inputs
+Canonical input fields:
 
----
-
-## Token definition
-
-Given:
-- identifier tuple variant `t` (bytes)
-- key `k` (bytes)
-
-Token:
-- `HMAC_SHA256(k, t)` → hex-encoded lowercase string
-
-Tokens are **not persistent** across rotations.
-
----
-
-## Input fields (minimum)
-
-EMTP v1 defines the following canonical fields:
-- `full_name` (string)
+- `name` (string): may include honorifics/suffixes
 - `dob` (YYYY-MM-DD)
-- `phone` (E.164 or normalized digits)
-- `address` (string normalized)
+- `phones` (array of strings)
+- `addresses` (array of strings)
+- `id_numbers` (array of strings; optional)
 
-Implementations MAY include additional fields, but must not break compatibility.
+### 2.1 Name parsing rules
+Implementations MUST:
+- uppercase for canonicalization
+- remove punctuation
+- collapse repeated whitespace
+- remove honorific prefixes when present (MR, MRS, MS, DR, PROF, etc.)
+- parse recognized suffixes from the tail (JR, SR, I, II, III, IV, V, VI)
+- retain suffix as an explicit structured component for tuple generation
 
----
+Implementations SHOULD attempt to detect and drop leading honorifics even if embedded in the name field (e.g., "Mr. J R R Tolkien").
 
-## Canonicalization (v1)
+### 2.2 Identifier suffixes (`id_numbers`)
+Participants MAY provide `id_numbers`: strings containing **4+ digits** that represent suffixes of any identifier.
 
-- trim whitespace
-- lowercase
-- normalize punctuation
-- phone: digits only, preserve country code if present
-- address: normalize common abbreviations (e.g., "st" → "street") where feasible
+Implementations MUST:
+1. Extract the longest contiguous digit sequence of length ≥ 4 from each entry.
+2. Generate suffix components:
+   - `id4:<last4>`
+   - `id5:<last5>` if available
+3. SHOULD generate:
+   - `id6:<last6>` if available
 
-See `schemas/emtp_v1.md` for exact rules.
+Identifier types MUST be ignored.
 
----
+These suffix components are included in tuple variants (see §3).
 
-## Tuple variant expansion
+## 3. Tuple variant generation
+The canonical tuple includes:
 
-To improve match recall, clients generate a set of variants, e.g.:
-- name: first/last swaps, middle initial optional, nickname list
-- phone: with/without country code, last-10 digits
-- address: unit stripped vs included, common abbreviations expanded
+- normalized name components (first, middle(s), last, suffix)
+- dob
+- optional phone variants
+- optional address variants
+- optional id suffix components (id4/id5/id6)
 
-Variants MUST be deterministic given the same input.
+Participants generate multiple variants by:
+- using initials vs expanded segments
+- including/excluding middle names
+- phone with/without country code
+- address line token variants
 
----
+## 4. Token computation
+For each tuple variant and each active key:
 
-## Token set construction
+```
+token = HMAC(key, canonical_tuple_bytes)
+```
 
-For each tuple variant `t` and each active key `k`:
-- compute `HMAC_SHA256(k, t)`
-- collect into a set
-- deduplicate
+Output tokens MUST be encoded as lowercase hex.
 
-Clients SHOULD publish/post tokens in arbitrary order.
+## 5. Rotation + overlap
+Key Server returns at least:
+- `key_current`
+- `key_prior`
 
----
+Participants MUST compute tokens with both to maintain match continuity across rotation.
 
-## Key overlap window
+## 6. Matching semantics
+Two parties match if the intersection of token sets is non-empty.
 
-Key Server returns:
-- `current` key
-- `prior` key (at minimum)
+Tokens that include `id5` or `id6` SHOULD be treated as higher-confidence than demographic-only matches.
 
-This ensures matching continuity during rotation boundaries.
-
----
-
-## Security circuit breaker
-
-Key Server MUST be able to revoke key access for misuse by:
-- denying requests from revoked certificate serials
-- rotating keys early if required
-
-See `docs/key-server.md`.
-
+## 7. Privacy properties
+- No demographics are transmitted in the protocol
+- Tokens expire with key rotation and cannot serve as persistent IDs
+- Restricted key access enables revocation for misuse circuit-breaker

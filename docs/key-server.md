@@ -1,74 +1,30 @@
-# EMTP Key Server Protocol
+# Key Server (v0.3)
 
-## Purpose
+The Key Server distributes rotating HMAC keys to credentialed participants.
 
-The Key Server distributes a rotating set of shared HMAC keys to **credentialed participants**.
-Restricted access is a **privacy circuit breaker**: the Key Server can revoke access for misuse.
+## Requirements
+- Authenticate participants (e.g., mTLS / OAuth)
+- Issue current + prior keys
+- Rotate on fixed cadence (e.g., monthly)
+- Support revocation (deny key access)
 
-The Key Server MUST NOT accept or store demographics.
+## Suggested endpoints
 
----
-
-## Endpoint
-
-```
-GET /keys?schema=emtp_v1
-Accept: application/emtp+json
-(mTLS required)
-```
-
-### Response (example)
+### GET /keys
+Returns JSON:
 
 ```json
 {
-  "schema": "emtp_v1",
-  "keys": [
-    {"kid":"2026-01","not_before":"2026-01-01T00:00:00Z","not_after":"2026-02-01T00:00:00Z","key_b64":"..."},
-    {"kid":"2025-12","not_before":"2025-12-01T00:00:00Z","not_after":"2026-01-01T00:00:00Z","key_b64":"..."}
-  ]
+  "schema": "emtp_keys",
+  "version": 1,
+  "rotation": "monthly",
+  "current": { "key_id": "2026-01", "key_b64": "<base64>" },
+  "prior":   { "key_id": "2025-12", "key_b64": "<base64>" }
 }
 ```
 
-- Key material MUST be base64 encoded bytes (`key_b64`)
-- Key order is not meaningful
-- Key Server MAY return more than two keys (e.g., for longer overlap windows)
+Participants MUST compute tokens for both keys.
 
----
-
-## Authentication
-
-- **mTLS required**
-- participant authorization determined by certificate Policy OID and/or enrollment registry
-- Key Server SHOULD publish a CRL/denylist mechanism (serial numbers)
-
----
-
-## Rotation
-
-- cadence: monthly (recommended default), daily for higher-risk ecosystems
-- overlap: at least one prior period, recommended two for resiliency
-
----
-
-## Caching
-
-- responses SHOULD be cacheable by the client, but never by public intermediaries
-- Key Server SHOULD set:
-  - `Cache-Control: private, max-age=<...>`
-  - `ETag` for efficient refresh
-
----
-
-## Revocation behavior
-
-On revocation:
-- Key Server denies future key fetches for the revoked participant
-- optional: rotate keys early + widen overlap window
-
----
-
-## Non-goals
-
-The Key Server is not a global identity provider.
-It is only a key distribution service under governance.
-
+## Revocation
+Key Server MUST deny access to revoked participants.
+Key Server SHOULD maintain audit logs of key fetches.
