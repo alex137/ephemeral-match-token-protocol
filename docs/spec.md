@@ -1,85 +1,86 @@
-# EMTP Specification (v0.3)
+# EMTP Specification (Draft)
 
-## 1. Overview
-EMTP enables privacy-preserving person matching by sharing ephemeral HMAC tokens derived from normalized identifier tuples.
+EMTP (Ephemeral Match Token Protocol) defines how organizations generate **match tokens** that enable probabilistic person matching without sharing demographics in cleartext and without creating durable IDs.
 
-Participants:
-- **normalize** demographics and optional identifier suffixes into tuple variants
-- **compute tokens** using rotating HMAC keys from a Key Server
-- **share tokens** (never demographics) via any transport
+This repo specifies:
+- how to generate canonical match strings
+- how to combine those strings with short-lived keys to create tokens
+- how to distribute code and keys via STP (State Transfer Protocol)
 
-## 2. Inputs
-Canonical input fields:
+---
 
-- `name` (string): may include honorifics/suffixes
-- `dob` (YYYY-MM-DD)
-- `phones` (array of strings)
-- `addresses` (array of strings)
-- `id_numbers` (array of strings; optional)
+## 1. Canonical match strings
 
-### 2.1 Name parsing rules
-Implementations MUST:
-- uppercase for canonicalization
-- remove punctuation
-- collapse repeated whitespace
-- remove honorific prefixes when present (MR, MRS, MS, DR, PROF, etc.)
-- parse recognized suffixes from the tail (JR, SR, I, II, III, IV, V, VI)
-- retain suffix as an explicit structured component for tuple generation
+Implementations generate a set of canonical strings from local identifiers (e.g., name, DOB, address, phone). Canonicalization details are provided as source code referenced by the **Code SURL**.
 
-Implementations SHOULD attempt to detect and drop leading honorifics even if embedded in the name field (e.g., "Mr. J R R Tolkien").
+**Important:** the canonical-string code SHOULD NOT embed keys or produce tokens. It outputs deterministic strings.
 
-### 2.2 Identifier suffixes (`id_numbers`)
-Participants MAY provide `id_numbers`: strings containing **4+ digits** that represent suffixes of any identifier.
+---
 
-Implementations MUST:
-1. Extract the longest contiguous digit sequence of length ≥ 4 from each entry.
-2. Generate suffix components:
-   - `id4:<last4>`
-   - `id5:<last5>` if available
-3. SHOULD generate:
-   - `id6:<last6>` if available
+## 2. Keys and key manifests
 
-Identifier types MUST be ignored.
+Tokens are made short-lived by using short-lived keys.
 
-These suffix components are included in tuple variants (see §3).
+A **key manifest** describes exactly how to turn a canonical string into a match token, including:
+- key material (base64)
+- algorithm ID (e.g., HMAC-SHA256)
+- any canonical instructions (prepend/append, separators)
+- validity window / expiration
 
-## 3. Tuple variant generation
-The canonical tuple includes:
+---
 
-- normalized name components (first, middle(s), last, suffix)
-- dob
-- optional phone variants
-- optional address variants
-- optional id suffix components (id4/id5/id6)
+## 3. Token generation
 
-Participants generate multiple variants by:
-- using initials vs expanded segments
-- including/excluding middle names
-- phone with/without country code
-- address line token variants
+Given:
+- `S`: the set of canonical strings
+- `K`: the set of active keys from the key distribution stream
 
-## 4. Token computation
-For each tuple variant and each active key:
+A complete match token set is:
 
 ```
-token = HMAC(key, canonical_tuple_bytes)
+T = { token(k, s)  for each k in K  for each s in S }
 ```
 
-Output tokens MUST be encoded as lowercase hex.
+Where `token(k, s)` is defined by the key manifest.
 
-## 5. Rotation + overlap
-Key Server returns at least:
-- `key_current`
-- `key_prior`
+---
 
-Participants MUST compute tokens with both to maintain match continuity across rotation.
+## 4. STP streams
 
-## 6. Matching semantics
-Two parties match if the intersection of token sets is non-empty.
+EMTP uses STP as its coordination/control plane.
 
-Tokens that include `id5` or `id6` SHOULD be treated as higher-confidence than demographic-only matches.
+### 4.1 Code SURL
+An STP table mapping languages to code manifest SURLs.
 
-## 7. Privacy properties
-- No demographics are transmitted in the protocol
-- Tokens expire with key rotation and cannot serve as persistent IDs
-- Restricted key access enables revocation for misuse circuit-breaker
+- PrimaryKey: `language`
+- Record: `code_manifest_surl`
+
+A code manifest points to:
+- source code (or a versioned archive)
+- a verification hash
+- optional build/run instructions
+
+### 4.2 Key distribution SURL
+An STP table listing active key manifests.
+
+- PrimaryKey: `key_manifest_surl`
+- Record: `expires_at` (RFC3339 UTC)
+
+A key is active if it:
+- is present in the key distribution table, and
+- has not expired
+
+Keys can be revoked early by a delete row (`-`) for the `key_manifest_surl`.
+
+### 4.3 Key manifest SURLs
+Key manifests contain the key material and token derivation instructions.
+
+They may be STP streams (append-only) or static documents, but MUST be immutable by reference (versioned URL or content-addressed).
+
+---
+
+## 5. Security properties (informal)
+
+- Tokens are not durable identifiers because they depend on short-lived keys.
+- Organizations never need to send demographics to the matching service; they publish tokens.
+- Revocation is immediate by deleting a key manifest from the distribution stream.
