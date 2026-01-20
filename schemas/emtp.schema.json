@@ -1,40 +1,82 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "EMTP Input Schema",
+  "$id": "https://emtp.example/schemas/emtp_v1.json",
+  "title": "EMTP v1 Input Schema",
+  "description": "JSON Schema for EMTP (Ephemeral Match Token Protocol) input records. See spec.md for normative behavior.",
   "type": "object",
   "properties": {
     "full_name": {
       "type": "string",
-      "description": "Raw full name string; implementation normalizes, strips honorifics, parses suffix."
+      "description": "Full name string. May include honorifics, initials, middle names, and suffixes. Implementation normalizes per spec section 4.2.",
+      "minLength": 1
     },
     "dob": {
       "type": "string",
-      "description": "Date of birth in YYYY-MM-DD or other parseable format (implementation must normalize)."
+      "description": "Date of birth in YYYY-MM-DD format. Implementation validates per spec section 4.3.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
     },
     "phones": {
       "type": "array",
+      "description": "Phone numbers in any format. Implementation normalizes to E.164 per spec section 4.4.",
       "items": {
-        "type": "string"
-      },
-      "description": "Phone strings; implementation normalizes to E.164 where possible."
+        "type": "string",
+        "minLength": 1
+      }
     },
     "addresses": {
       "type": "array",
+      "description": "Postal addresses (structured objects or free-form strings). Implementation normalizes and generates variants per spec section 4.5.",
       "items": {
-        "type": "string"
-      },
-      "description": "Free-text addresses; implementation generates variants."
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Free-form address string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "description": "Structured address per spec section 3.3",
+            "properties": {
+              "line1": {
+                "type": "string",
+                "description": "Street address"
+              },
+              "line2": {
+                "type": "string",
+                "description": "Additional address line (apt, suite, etc.)"
+              },
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "state": {
+                "type": "string",
+                "description": "State/province/region code"
+              },
+              "postal_code": {
+                "type": "string",
+                "description": "Postal/ZIP code"
+              },
+              "country": {
+                "type": "string",
+                "description": "ISO 3166-1 alpha-2 country code (default: US)",
+                "default": "US"
+              }
+            },
+            "required": ["line1", "city", "state", "postal_code"]
+          }
+        ]
+      }
     },
     "idnos": {
       "type": "array",
+      "description": "Identifier number fragments (SSN, DL, member IDs, etc.). Implementation extracts digits and generates last4/last5/last6 variants per spec section 4.6.",
       "items": {
-        "type": "string"
-      },
-      "description": "Identifier number fragments; implementation extracts last4/last5/last6 digits tokens."
+        "type": "string",
+        "minLength": 1
+      }
     }
   },
-  "required": [
-    "full_name",
-    "dob"
-  ]
+  "required": ["full_name", "dob"],
+  "additionalProperties": false
 }

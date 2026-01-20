@@ -1,5 +1,5 @@
 {
-  "name": "MR. JRR TOlkein",
+  "full_name": "MR. JRR Tolkien",
   "dob": "1892-01-03",
   "phones": [
     "+1 (212) 555-1212"
@@ -7,7 +7,7 @@
   "addresses": [
     "20 Northmoor Rd, Oxford, UK"
   ],
-  "id_numbers": [
+  "idnos": [
     "12345",
     "acct: 987654"
   ]

@@ -1,73 +1,127 @@
 # EMTP: Ephemeral Match Token Protocol
 
-EMTP is a way for independent organizations to discover that they likely refer to the **same person** (member/patient) without sharing demographics in cleartext and without creating durable identifiers.
+EMTP is a privacy-preserving protocol for organizations to discover that they refer to the **same person** without sharing demographics in cleartext and without creating durable identifiers.
 
-At a high level, each organization:
-1. turns local identifiers into one or more **canonical match strings**
-2. applies one or more **short-lived keys** to those strings to generate **match tokens**
-3. uses token overlap to route the right request to the right endpoint
+## How It Works
 
-EMTP is designed so that tokens are **not usable as durable identifiers**:
-- token generation depends on short-lived keys
-- keys can be rotated/expired and revoked
+Each organization:
 
----
+1. **Normalizes** local identifiers (name, DOB, phone, address) using deterministic rules
+2. **Generates tuples** combining normalized fields in standard formats
+3. **Computes tokens** by applying HMAC-SHA256 with short-lived shared keys
+4. **Matches** by comparing token sets with other organizations
 
-## EMTP + STP
+Tokens are **ephemeral** because:
+- Token generation depends on short-lived keys (monthly rotation recommended)
+- Keys can be rotated and revoked
+- Without the key, tokens cannot be reversed to identifiers
 
-EMTP assumes three STP state streams:
+## Quick Start
 
-### 1) Code SURL (canonical string generators)
-An STP table mapping programming languages to *source-code manifests*.
+```python
+from reference.python.emtp import process_record, decode_key_hex
 
-- **PrimaryKey:** `language` (e.g., `go`, `python`, `javascript`)
-- **Record:** `code_manifest_surl`
+# Example (use real keys from key server in production)
+test_key = decode_key_hex(
+    "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+)
 
-Each code manifest points to source that deterministically generates canonical strings from local identifiers. The published code should generate canonical strings only (not tokens), so keying policy lives with the key distribution stream.
+result = process_record(
+    full_name="John R. Tolkien",
+    dob="1892-01-03",
+    phones=["(212) 555-0100"],
+    keys=[test_key],
+)
 
-### 2) Key distribution SURL (active keys)
-An STP table listing active key manifests.
+print(f"Generated {result['tuple_count']} tuples")
+print(f"Generated {result['token_count']} tokens")
+```
 
-- **PrimaryKey:** `key_manifest_surl`
-- **Record:** `expires_at` (RFC3339 UTC)
+## Repository Structure
 
-Deleting a `key_manifest_surl` row revokes that key (even before `expires_at`).
+```
+emtp/
+├── spec.md                    # Normative specification (start here)
+├── schemas/
+│   └── emtp.schema.json       # JSON Schema for input validation
+├── reference/
+│   └── python/
+│       └── emtp.py            # Reference implementation
+├── test_vectors/
+│   └── emtp_v1_vectors.json   # Conformance test vectors
+├── docs/
+│   ├── normalization.md       # Normalization examples and guidance
+│   └── key-server.md          # Key distribution guidance
+└── examples/
+    └── example-input.json     # Example input record
+```
 
-### 3) Key manifest SURLs (per-key details)
-Each key manifest is an STP stream (or a static document) that contains:
-- the **key material** (as bytes / base64)
-- the **key algorithm ID** and hashing details
-- any canonical instructions (e.g., whether to prepend/append the key)
-- the key’s effective period
+## Specification
 
----
+The complete specification is in [`spec.md`](spec.md). Key sections:
 
-## How to generate match tokens
+| Section | Description |
+|---------|-------------|
+| 3. Inputs | Required and optional identifier fields |
+| 4. Normalization | Deterministic normalization rules |
+| 5. Tuple Construction | How to build matchable tuples |
+| 6. Token Generation | HMAC computation with domain separation |
+| 7. Key Distribution | Key server requirements and rotation |
 
-1) Generate your canonical string set using the current code for your language.
+## Key Concepts
 
-2) Fetch the current key distribution SURL.
+### Normalization (Section 4)
 
-3) For each unexpired key manifest:
-- load the manifest
-- compute tokens for **each canonical string** using the manifest’s algorithm
+All inputs are normalized to ensure matching despite data variations:
 
-**A complete match-token set** is: *every canonical string hashed with every unexpired key*.
+| Input | Normalized |
+|-------|------------|
+| `MR. JRR Tolkien` | `jrr tolkien` |
+| `J. R. R. Tolkien` | `j r r tolkien` |
+| `(212) 555-0100` | `2125550100` |
 
----
+### Tuple Format (Section 5)
 
-## Why STP
+Tuples are labeled, pipe-delimited strings:
 
-Using STP for EMTP coordination makes the control plane:
-- cacheable (poll or stream)
-- replayable (gap recovery)
-- auditable (ordered change log)
+```
+name=jrr tolkien|dob=1892-01-03|phone=2125550100
+```
 
-See:
-- `docs/spec.md`
-- `docs/key-server.md`
+### Token Generation (Section 6)
 
----
+Tokens include domain separation for security:
+
+```
+message = "emtp|v1|" + tuple
+token = HMAC-SHA256(key, message)
+```
+
+## Key Distribution
+
+EMTP requires a key distribution mechanism. Options include:
+
+- **STP streams** (State Transfer Protocol) for real-time distribution
+- **REST API** with authentication
+- **Static files** for testing
+
+See [`docs/key-server.md`](docs/key-server.md) for details.
+
+## Conformance
+
+Implementations must pass the test vectors in [`test_vectors/emtp_v1_vectors.json`](test_vectors/emtp_v1_vectors.json).
+
+A conforming implementation:
+1. Produces identical normalized outputs for test inputs
+2. Generates the same tuples for test records
+3. Computes matching tokens with the test key
+
+## Security Properties
+
+- **No raw demographics shared**: Only tokens are exchanged
+- **Ephemeral tokens**: Key rotation prevents persistent identifiers
+- **Dictionary attack mitigation**: Keys restricted to authenticated participants
+- **Revocation support**: Misbehaving participants can be excluded
 
 ## License
 
