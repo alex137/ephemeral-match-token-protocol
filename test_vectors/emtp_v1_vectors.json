@@ -2,75 +2,87 @@
   "schema": "emtp_v1",
   "version": "1.0",
   "description": "EMTP v1 conformance test vectors",
-  "domain_prefix": "emtp|v1|",
+  "domain_prefix": "EMTP|v1|",
   "keys": [
     {
       "kid": "test-2026-01",
       "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
-      "note": "Fixed 256-bit key for test vectors only"
+      "note": "Fixed 256-bit key for test vectors only - DO NOT USE IN PRODUCTION"
     }
   ],
   "normalization_vectors": [
     {
       "description": "Basic name normalization with honorific",
       "input": "MR. JRR Tolkien",
-      "expected_normalized": "jrr tolkien",
+      "expected_normalized": "JRR TOLKIEN",
       "expected_tokens": {
-        "first": "jrr",
+        "given": "JRR",
         "middles": [],
-        "last": "tolkien",
+        "family": "TOLKIEN",
         "suffix": ""
       }
     },
     {
       "description": "Name with periods in initials",
       "input": "J. R. R. Tolkien",
-      "expected_normalized": "j r r tolkien",
+      "expected_normalized": "J R R TOLKIEN",
       "expected_tokens": {
-        "first": "j",
-        "middles": ["r", "r"],
-        "last": "tolkien",
+        "given": "J",
+        "middles": ["R", "R"],
+        "family": "TOLKIEN",
         "suffix": ""
       }
     },
     {
       "description": "Name with suffix",
       "input": "John Tolkien Sr.",
-      "expected_normalized": "john tolkien",
+      "expected_normalized": "JOHN TOLKIEN",
       "expected_tokens": {
-        "first": "john",
+        "given": "JOHN",
         "middles": [],
-        "last": "tolkien",
-        "suffix": "sr"
+        "family": "TOLKIEN",
+        "suffix": "SR"
       }
     },
     {
       "description": "Name with suffix spelled out",
       "input": "John Tolkien Senior",
-      "expected_normalized": "john tolkien",
+      "expected_normalized": "JOHN TOLKIEN",
       "expected_tokens": {
-        "first": "john",
+        "given": "JOHN",
         "middles": [],
-        "last": "tolkien",
-        "suffix": "sr"
+        "family": "TOLKIEN",
+        "suffix": "SR"
       }
+    },
+    {
+      "description": "Name with diacritics",
+      "input": "José García-López",
+      "expected_normalized": "JOSE GARCIA LOPEZ"
     },
     {
       "description": "Phone normalization - US format",
       "input": "(212) 555-0100",
-      "expected_normalized": "2125550100"
+      "expected_e164": "+12125550100",
+      "expected_national": "2125550100"
     },
     {
       "description": "Phone normalization - with country code",
       "input": "+1-212-555-0100",
-      "expected_normalized": "2125550100",
-      "note": "Leading 1 stripped for 11-digit US numbers"
+      "expected_e164": "+12125550100",
+      "expected_national": "2125550100"
     },
     {
-      "description": "Address normalization",
-      "input": "20 Northmoor Rd, Oxford",
-      "expected_normalized": "20 northmoor rd oxford"
+      "description": "Address normalization - structured",
+      "input": {
+        "line1": "20 Northmoor Rd",
+        "city": "Oxford",
+        "state": "OX",
+        "postal_code": "OX2 6"
+      },
+      "expected_line1_postal": "20 NORTHMOOR RD|OX2 6",
+      "expected_line1_city_state": "20 NORTHMOOR RD|OXFORD|OX"
     },
     {
       "description": "DOB validation",
@@ -85,56 +97,63 @@
   ],
   "tuple_vectors": [
     {
-      "description": "Basic name+dob tuple",
+      "description": "Basic NAME+DOB tuple",
       "inputs": {
-        "name": "jrr tolkien",
-        "dob": "1892-01-03"
+        "NAME": "JRR TOLKIEN",
+        "DOB": "1892-01-03"
       },
-      "expected_tuple": "name=jrr tolkien|dob=1892-01-03"
+      "expected_tuple": "NAME=JRR TOLKIEN|DOB=1892-01-03"
     },
     {
-      "description": "Name+dob+phone tuple",
+      "description": "NAME+DOB+PHONE tuple with E.164",
       "inputs": {
-        "name": "jrr tolkien",
-        "dob": "1892-01-03",
-        "phone": "2125550100"
+        "NAME": "JRR TOLKIEN",
+        "DOB": "1892-01-03",
+        "PHONE": "+12125550100"
       },
-      "expected_tuple": "name=jrr tolkien|dob=1892-01-03|phone=2125550100"
+      "expected_tuple": "NAME=JRR TOLKIEN|DOB=1892-01-03|PHONE=+12125550100"
     },
     {
       "description": "Full tuple with all fields",
       "inputs": {
-        "name": "jrr tolkien",
-        "dob": "1892-01-03",
-        "phone": "2125550100",
-        "address": "20 northmoor rd oxford",
-        "id": "6789"
+        "NAME": "JRR TOLKIEN",
+        "DOB": "1892-01-03",
+        "PHONE": "+12125550100",
+        "ADDR": "20 NORTHMOOR RD|OX2 6",
+        "ID": "6789"
       },
-      "expected_tuple": "name=jrr tolkien|dob=1892-01-03|phone=2125550100|address=20 northmoor rd oxford|id=6789"
+      "expected_tuple": "NAME=JRR TOLKIEN|DOB=1892-01-03|PHONE=+12125550100|ADDR=20 NORTHMOOR RD|OX2 6|ID=6789"
     },
     {
-      "description": "Phone+dob tuple (no name)",
+      "description": "DOB+PHONE tuple (no NAME)",
       "inputs": {
-        "dob": "1892-01-03",
-        "phone": "2125550100"
+        "DOB": "1892-01-03",
+        "PHONE": "+12125550100"
       },
-      "expected_tuple": "dob=1892-01-03|phone=2125550100"
+      "expected_tuple": "DOB=1892-01-03|PHONE=+12125550100"
     }
   ],
   "token_vectors": [
     {
       "description": "Basic token with domain separation",
-      "tuple": "name=jrr tolkien|dob=1892-01-03",
-      "domain_separated_message": "emtp|v1|name=jrr tolkien|dob=1892-01-03",
+      "tuple": "NAME=JRR TOLKIEN|DOB=1892-01-03",
+      "domain_separated_message": "EMTP|v1|NAME=JRR TOLKIEN|DOB=1892-01-03",
       "key_kid": "test-2026-01",
-      "expected_token": "17d878e5adfb971b9aad5c15b0aa85fbdd74605a4809423bb3cc41399d2ac427"
+      "expected_token": "a586bc1307ccf85e55b27ddd5379d2535fc547c09e6d892daec27a57174c798f"
     },
     {
-      "description": "Token with phone",
-      "tuple": "name=jrr tolkien|dob=1892-01-03|phone=2125550100",
-      "domain_separated_message": "emtp|v1|name=jrr tolkien|dob=1892-01-03|phone=2125550100",
+      "description": "Token with phone (E.164)",
+      "tuple": "NAME=JRR TOLKIEN|DOB=1892-01-03|PHONE=+12125550100",
+      "domain_separated_message": "EMTP|v1|NAME=JRR TOLKIEN|DOB=1892-01-03|PHONE=+12125550100",
       "key_kid": "test-2026-01",
-      "expected_token": "a43f1e894da995ec878c0edd18683179d854e827c135dacc3dd07f09b226832d"
+      "expected_token": "ffa155b148921d89acb112a26c552dd0d3e4a0afb3e055ae7ac8151cb7fccb2c"
+    },
+    {
+      "description": "Token with initials variant",
+      "tuple": "NAME=J R R TOLKIEN|DOB=1892-01-03",
+      "domain_separated_message": "EMTP|v1|NAME=J R R TOLKIEN|DOB=1892-01-03",
+      "key_kid": "test-2026-01",
+      "expected_token": "93501fc19af973af51b1e9ad1e3adb3f7776ab0e3dcfaacb83099ff103f125be"
     }
   ],
   "match_vectors": [
@@ -151,13 +170,14 @@
         "phones": ["+1 212 555 0100"]
       },
       "shared_tuples": [
-        "name=jrr tolkien|dob=1892-01-03",
-        "name=jrr tolkien|dob=1892-01-03|phone=2125550100"
+        "NAME=J TOLKIEN|DOB=1892-01-03",
+        "DOB=1892-01-03|PHONE=+12125550100",
+        "DOB=1892-01-03|PHONE=2125550100"
       ],
-      "note": "J.R.R. expands to 'jrr' via initial-collapsing variant"
+      "note": "Both produce J TOLKIEN (initials_family) and same phone variants"
     },
     {
-      "description": "Records with name variation that should still match",
+      "description": "Records with name variation that should match via given+family",
       "record_a": {
         "full_name": "John Ronald Tolkien",
         "dob": "1892-01-03"
@@ -167,9 +187,9 @@
         "dob": "1892-01-03"
       },
       "shared_tuples": [
-        "name=john tolkien|dob=1892-01-03"
+        "NAME=JOHN TOLKIEN|DOB=1892-01-03"
       ],
-      "note": "First+last variant matches when middle is dropped"
+      "note": "given_family variant matches when middle is dropped"
     }
   ],
   "expansion_vectors": [
@@ -179,29 +199,34 @@
         "full_name": "John Ronald Reuel Tolkien Sr",
         "dob": "1892-01-03",
         "phones": ["(212) 555-0100"],
-        "addresses": ["20 Northmoor Rd Apt 5, Oxford"],
+        "addresses": [{
+          "line1": "20 Northmoor Rd",
+          "line2": "Apt 5",
+          "city": "Oxford",
+          "state": "OX",
+          "postal_code": "OX2 6"
+        }],
         "idnos": ["123-45-6789"]
       },
       "expected_name_variants": [
-        "john ronald reuel tolkien",
-        "john tolkien",
-        "john tolkien sr",
-        "j tolkien",
-        "j r r tolkien"
+        "JOHN RONALD REUEL TOLKIEN",
+        "JOHN TOLKIEN",
+        "JOHN TOLKIEN SR",
+        "J R R TOLKIEN",
+        "JRR TOLKIEN"
       ],
-      "expected_phone_variants": [
-        "2125550100"
-      ],
+      "expected_phone_e164": "+12125550100",
+      "expected_phone_national": "2125550100",
       "expected_address_variants": [
-        "20 northmoor rd apt 5 oxford",
-        "20 northmoor rd oxford"
+        "20 NORTHMOOR RD|OX2 6",
+        "20 NORTHMOOR RD|OXFORD|OX"
       ],
       "expected_id_variants": [
         "6789",
         "56789",
         "456789"
       ],
-      "minimum_tuple_count": 20,
+      "minimum_tuple_count": 15,
       "maximum_tuple_count": 256
     }
   ]

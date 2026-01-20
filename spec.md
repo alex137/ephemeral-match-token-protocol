@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Status:** Draft
-**Last updated:** 2026-01-19
+**Last updated:** 2026-01-20
 
 ---
 
@@ -15,7 +15,7 @@ This specification defines:
 2. **Normalization** rules
 3. **Tuple construction** and expansion
 4. **Token generation** (HMAC construction with domain separation)
-5. **Key distribution** and rotation (via STP or other mechanisms)
+5. **Key distribution** and rotation
 6. Security, privacy, and interoperability requirements
 
 ---
@@ -25,9 +25,9 @@ This specification defines:
 ### 1.1 Goals
 
 - **Match without sharing identifiers:** Parties compute matchable tokens locally without revealing raw demographics to a central registry.
-- **Ephemeral identifiers:** Tokens change over time (via key rotation) to prevent creation of persistent identifiers or cross-period correlation.
+- **Ephemeral identifiers:** Tokens MUST change over time (via key rotation) to prevent creation of persistent identifiers or cross-period correlation.
 - **Robust to messy data:** Tolerate capitalization, punctuation, honorifics, missing middle names, suffixes, nickname-like variants, and formatting differences in phones/addresses.
-- **Deterministic and auditable:** Token generation is deterministic given the same inputs and keys. Implementations can be verified against test vectors.
+- **Deterministic and auditable:** Token generation MUST be deterministic given the same inputs and keys. Implementations can be verified against test vectors.
 - **Composable transport:** Token sets can be exchanged over any transport (STP, HTTPS APIs, files, etc.).
 
 ### 1.2 Non-Goals
@@ -50,6 +50,7 @@ This specification defines:
 | **Tuple expansion** | Generating multiple tuples per individual to improve match recall. |
 | **Key epoch** | The time window for which a given key is valid (e.g., one month). |
 | **Overlap window** | A period where both current and prior epoch keys are valid. |
+| **Weak token** | A token generated without DOB; has higher false-positive risk. |
 
 ---
 
@@ -61,18 +62,33 @@ An EMTP input record contains the following fields:
 
 | Field | Format | Description |
 |-------|--------|-------------|
-| `dob` | `YYYY-MM-DD` | Date of birth (Gregorian calendar). Required for all non-weak tokens. |
+| `dob` | `YYYY-MM-DD` | Date of birth (Gregorian calendar). Required for standard tokens. |
 | `full_name` | string | Full name, may include honorifics, initials, middle names, suffixes. |
 
-> **Rationale:** Without DOB, false-positive rates rise dramatically. Implementations MAY support token generation without DOB but MUST label resulting token sets as "weak".
+> **Rationale:** Without DOB, false-positive rates rise dramatically. Implementations MAY support token generation without DOB but MUST label resulting tokens as **weak tokens**.
 
 ### 3.2 Optional Fields
 
 | Field | Format | Description |
 |-------|--------|-------------|
-| `phones` | array of strings | Phone numbers in any format. |
-| `addresses` | array of strings | Postal addresses (free-form or structured). |
+| `phones` | array of strings | Phone numbers in any format (will be normalized to E.164). |
+| `addresses` | array of objects or strings | Postal addresses (structured or free-form). |
 | `idnos` | array of strings | Identifier fragments (SSN, DL, member IDs, etc.) containing digits. |
+
+### 3.3 Structured Address Format
+
+When addresses are provided as objects, implementations MUST support:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `line1` | Yes | Street address |
+| `line2` | No | Additional address line (apt, suite, etc.) |
+| `city` | Yes | City name |
+| `state` | Yes | State/province/region code |
+| `postal_code` | Yes | Postal/ZIP code |
+| `country` | No | ISO 3166-1 alpha-2 country code (default: `US`) |
+
+Implementations MUST also accept a single free-form address string and parse it.
 
 ---
 
@@ -82,19 +98,19 @@ All normalization MUST be deterministic. Two implementations given the same inpu
 
 ### 4.1 General String Normalization
 
-For all string fields, apply these steps in order:
+For all string fields, apply these steps **in order**:
 
 1. **Unicode normalize** to NFKD
 2. **Strip diacritics** (remove combining characters)
-3. **Lowercase** all ASCII characters
+3. **Uppercase** all ASCII characters
 4. **Replace** all non-alphanumeric characters with a single space
 5. **Collapse** repeated whitespace to single space
 6. **Trim** leading and trailing whitespace
 
 **Example:**
 ```
-Input:  "MR. JRR TOlkein"
-Output: "mr jrr tolkein"
+Input:  "Mr. José García-López"
+Output: "MR JOSE GARCIA LOPEZ"
 ```
 
 ### 4.2 Name Normalization
@@ -104,27 +120,29 @@ After general string normalization:
 #### 4.2.1 Honorific Removal
 
 Remove leading honorific tokens (case-insensitive):
-`mr`, `mrs`, `ms`, `miss`, `dr`, `prof`, `rev`, `sir`, `madam`
+`MR`, `MRS`, `MS`, `MISS`, `DR`, `PROF`, `REV`, `SIR`, `MADAM`
 
 If a name consists solely of an honorific plus one token, do NOT remove the honorific.
 
 #### 4.2.2 Suffix Parsing
 
 Detect and separate suffixes at end of name:
-- `jr`, `sr`, `junior`, `senior` → normalize to `jr` or `sr`
-- `i`, `ii`, `iii`, `iv`, `v`, `vi`
+- `JR`, `SR`, `JUNIOR`, `SENIOR` → normalize to `JR` or `SR`
+- `I`, `II`, `III`, `IV`, `V`, `VI`
 
-Suffix detection MUST tolerate punctuation and commas (e.g., `Sr.`, `Tolkien, Jr.`).
+Suffix detection MUST tolerate punctuation and commas (e.g., `SR.`, `TOLKIEN, JR.`).
 
 #### 4.2.3 Name Tokenization
 
 Split the remaining name into tokens:
-- **first**: first token
+- **given**: first token (first name)
 - **middles**: zero or more middle tokens
-- **last**: final token (before suffix, if any)
+- **family**: final token(s) before suffix (last name)
 - **suffix**: normalized suffix or empty
 
-Treat multi-character runs of initials (e.g., `jrr`) as a single token. Single letters with periods (e.g., `J.R.R.`) become separate initial tokens after normalization (`j r r`).
+Handle initials:
+- Tokens like `J.R.R.` become separate initials: `J`, `R`, `R`
+- Single-letter tokens are treated as initials
 
 #### 4.2.4 Canonical Name Forms
 
@@ -132,49 +150,76 @@ Generate these canonical name strings:
 
 | Form | Construction | Example |
 |------|--------------|---------|
-| `name_full` | all tokens joined with space | `jrr tolkein` |
-| `name_first_last` | first + last only | `jrr tolkein` (when no middles) |
-| `name_first_last_suffix` | first + last + suffix | `john tolkien sr` |
-| `name_first_initial_last` | first initial + last | `j tolkein` |
+| `NAME_FULL` | all tokens joined with space | `JOHN RONALD REUEL TOLKIEN` |
+| `NAME_GIVEN_FAMILY` | given + family only | `JOHN TOLKIEN` |
+| `NAME_GIVEN_FAMILY_SUFFIX` | given + family + suffix | `JOHN TOLKIEN SR` |
+| `NAME_INITIALS_FAMILY` | all initials + family | `J R R TOLKIEN` |
+| `NAME_GIVEN_INITIAL_FAMILY` | given + middle initials + family | `JOHN R R TOLKIEN` |
 
 ### 4.3 DOB Normalization
 
 - MUST output strict `YYYY-MM-DD` format
-- MUST validate: year 1800-2100, month 01-12, day 01-31 (with month validation)
+- MUST validate: year 1800-2100, month 01-12, day 01-31 (with month-appropriate day validation)
 - Invalid DOB MUST cause the record to be rejected or flagged
+- If only year/month known, implementations MAY generate weak tokens but MUST label them
 
 ### 4.4 Phone Normalization
 
 1. Strip all non-digit characters
-2. If resulting digits start with `1` and length is 11, treat as US number (strip leading `1`)
-3. Store the full digit string
+2. Normalize to **E.164 format** where possible:
+   - If number starts with country code, format as `+<countrycode><number>`
+   - If 11 digits starting with `1`, treat as US: `+1<10digits>`
+   - If 10 digits and default country is US, format as `+1<10digits>`
+3. Store both E.164 and national formats
 
 Generate variants:
-- `phone_full`: all digits (e.g., `2125550100`)
-- `phone_last10`: last 10 digits if length >= 10
-- `phone_last7`: last 7 digits if length >= 7 (optional; high collision risk)
+- `PHONE_E164`: full E.164 format (e.g., `+12125550100`)
+- `PHONE_NATIONAL`: national number without country code (e.g., `2125550100`)
+- `PHONE_LAST10`: last 10 digits (when length ≥ 10)
+- `PHONE_LAST7`: last 7 digits (optional; high collision risk, discouraged)
 
 ### 4.5 Address Normalization
 
-After general string normalization:
+#### 4.5.1 Structured Address Normalization
 
-1. **Expand/normalize abbreviations** (optional but recommended):
-   - `street` ↔ `st`, `avenue` ↔ `ave`, `road` ↔ `rd`, `boulevard` ↔ `blvd`, etc.
-   - `apartment` ↔ `apt`, `unit`, `#`
+After general string normalization, apply:
 
-2. **Generate variants:**
-   - Full normalized address
-   - Address with unit information removed (split at `apt`, `unit`, `#`, `ste`)
+1. **Abbreviation expansion/normalization** (bidirectional):
+   - `STREET` ↔ `ST`
+   - `AVENUE` ↔ `AVE`
+   - `ROAD` ↔ `RD`
+   - `BOULEVARD` ↔ `BLVD`
+   - `DRIVE` ↔ `DR`
+   - `LANE` ↔ `LN`
+   - `APARTMENT` ↔ `APT`
+   - `SUITE` ↔ `STE`
+   - `UNIT` ↔ `UNIT`
+
+2. **Postal code normalization**:
+   - US: Keep 5-digit base; optionally include ZIP+4 variant
+   - Other countries: Normalize per country rules
+
+#### 4.5.2 Address Variants
+
+Generate these address tuple components:
+
+| Variant | Construction |
+|---------|--------------|
+| `ADDR_LINE1_POSTAL` | `line1 \| postal_code` |
+| `ADDR_LINE1_CITY_STATE` | `line1 \| city \| state` |
+| `ADDR_LINE1_CITY_STATE_POSTAL` | `line1 \| city \| state \| postal_code` |
+| `ADDR_NO_UNIT` | `line1` with unit info removed |
 
 ### 4.6 ID Number Normalization
 
 For each `idno` string:
 
-1. Extract all contiguous digit sequences of length >= 4
+1. Extract all contiguous digit sequences of length ≥ 4
 2. For each extracted sequence of length L, generate:
-   - `id_last4`: last 4 digits (if L >= 4)
-   - `id_last5`: last 5 digits (if L >= 5)
-   - `id_last6`: last 6 digits (if L >= 6)
+   - `ID_LAST4`: last 4 digits (if L ≥ 4)
+   - `ID_LAST5`: last 5 digits (if L ≥ 5)
+   - `ID_LAST6`: last 6 digits (if L ≥ 6)
+3. Optionally include full sequence if L ≤ 12
 
 > **Rationale:** ID fragments enable disambiguation without revealing full identifiers or ID types.
 
@@ -187,53 +232,82 @@ For each `idno` string:
 A tuple is a string of labeled, pipe-delimited fields:
 
 ```
-field1=value1|field2=value2|field3=value3
+field=value|field=value|field=value
 ```
 
 **Requirements:**
-- Field names MUST be lowercase ASCII
-- Field names MUST be one of: `name`, `dob`, `phone`, `address`, `id`
+- Field names MUST be UPPERCASE ASCII
+- Field names MUST be one of: `NAME`, `DOB`, `PHONE`, `ADDR`, `ID`
 - Values MUST be normalized per Section 4
-- Fields MUST appear in this canonical order: `name`, `dob`, `phone`, `address`, `id`
+- Fields MUST appear in this canonical order: `NAME`, `DOB`, `PHONE`, `ADDR`, `ID`
 - Empty/missing fields MUST be omitted (not included as empty)
 
 **Example:**
 ```
-name=jrr tolkein|dob=1892-01-03|phone=2125550100
+NAME=JOHN TOLKIEN|DOB=1892-01-03|PHONE=+12125550100
 ```
 
 ### 5.2 Required Tuple Families
 
 Implementations MUST generate these tuple families when the required inputs are available:
 
-| Family | Fields | Purpose |
-|--------|--------|---------|
-| Name+DOB | `name`, `dob` | Primary match |
-| Name+DOB (first+last only) | `name` (first_last form), `dob` | Handles middle name variations |
-| Phone+DOB | `phone`, `dob` | Match via phone |
-| Address+DOB | `address`, `dob` | Match via address |
-| Name+DOB+Phone | `name`, `dob`, `phone` | Higher precision |
-| Name+DOB+Address | `name`, `dob`, `address` | Higher precision |
+#### Name + DOB Tuples
+
+| Tuple ID | Fields | Purpose |
+|----------|--------|---------|
+| `NAME_FULL_DOB` | `NAME` (full), `DOB` | Primary match |
+| `NAME_GIVEN_FAMILY_DOB` | `NAME` (given+family), `DOB` | Handles middle name variations |
+| `NAME_INITIALS_FAMILY_DOB` | `NAME` (initials+family), `DOB` | Handles initial variations |
+
+#### Phone + DOB Tuples
+
+| Tuple ID | Fields | Purpose |
+|----------|--------|---------|
+| `PHONE_E164_DOB` | `PHONE` (E.164), `DOB` | International phone match |
+| `PHONE_LAST10_DOB` | `PHONE` (last10), `DOB` | National phone match |
+
+#### Address + DOB Tuples
+
+| Tuple ID | Fields | Purpose |
+|----------|--------|---------|
+| `ADDR_LINE1_POSTAL_DOB` | `ADDR` (line1+postal), `DOB` | Address match |
+| `ADDR_LINE1_CITY_STATE_DOB` | `ADDR` (line1+city+state), `DOB` | Address match without postal |
+
+#### Combined Tuples
+
+| Tuple ID | Fields | Purpose |
+|----------|--------|---------|
+| `NAME_DOB_PHONE` | `NAME`, `DOB`, `PHONE` | Higher precision |
+| `NAME_DOB_ADDR` | `NAME`, `DOB`, `ADDR` | Higher precision |
 
 ### 5.3 Optional Tuple Families (with ID fragments)
 
-If `idnos` are provided:
+If `idnos` are provided, generate high-precision disambiguation tuples:
 
-| Family | Fields | Purpose |
-|--------|--------|---------|
-| Name+DOB+ID | `name`, `dob`, `id` | Disambiguation |
-| DOB+ID | `dob`, `id` | High-precision disambiguation |
-| Phone+DOB+ID | `phone`, `dob`, `id` | High-precision disambiguation |
+| Tuple ID | Fields | Purpose |
+|----------|--------|---------|
+| `NAME_DOB_ID` | `NAME` (given+family), `DOB`, `ID` (last4) | Disambiguation |
+| `DOB_ID` | `DOB`, `ID` (last4) | High-precision disambiguation |
+| `PHONE_DOB_ID` | `PHONE` (last10), `DOB`, `ID` (last4) | High-precision disambiguation |
+
+> Implementations SHOULD treat ID fragment tuples as **high precision** and prioritize them when resolving collisions.
 
 ### 5.4 Variant Expansion
 
 For each tuple family, generate variants by combining:
-- Different name forms (full, first+last, first initial+last, with/without suffix)
-- Different phone forms (full, last10)
-- Different address forms (with/without unit)
+- Different name forms (full, given+family, initials+family, with/without suffix)
+- Different phone forms (E.164, national, last10)
+- Different address forms (with/without unit, different components)
 - Different ID forms (last4, last5, last6)
 
 **Expansion cap:** Implementations MUST limit expansion to at most **256 tuples per person** to prevent combinatorial explosion.
+
+### 5.5 Weak Tuples
+
+Tuples generated without DOB are **weak tuples**. Implementations:
+- MAY generate weak tuples when DOB is unavailable
+- MUST label weak tuples/tokens distinctly
+- SHOULD warn users about higher false-positive rates
 
 ---
 
@@ -248,7 +322,7 @@ EMTP uses **HMAC-SHA256** for token generation.
 All HMAC inputs MUST include a domain separation prefix:
 
 ```
-message = "emtp|" + schema_id + "|" + tuple
+message = "EMTP|" + schema_id + "|" + tuple
 ```
 
 Where:
@@ -257,7 +331,7 @@ Where:
 
 **Example message:**
 ```
-emtp|v1|name=jrr tolkein|dob=1892-01-03|phone=2125550100
+EMTP|v1|NAME=JOHN TOLKIEN|DOB=1892-01-03|PHONE=+12125550100
 ```
 
 ### 6.3 Token Computation
@@ -276,7 +350,7 @@ Where:
 For a given input record and set of active keys, the output is:
 
 ```
-tokens = { HMAC(k, msg(t)) for each key k, for each tuple t }
+tokens = { (epoch_id, HMAC(k, msg(t))) for each key k, for each tuple t }
 ```
 
 Implementations SHOULD include key epoch identifiers with tokens to aid debugging and overlap handling.
@@ -345,7 +419,7 @@ For two implementations to produce matching tokens, they MUST:
 5. Use HMAC-SHA256 with lowercase hex output
 6. Support at least two-epoch key overlap
 
-Implementations SHOULD provide a compliance mode that outputs intermediate values (normalized fields, tuples) for debugging interoperability issues.
+Implementations SHOULD provide a **compliance mode** that outputs intermediate values (normalized fields, tuples) for debugging interoperability issues.
 
 ---
 
@@ -374,7 +448,7 @@ Implementations SHOULD provide a compliance mode that outputs intermediate value
 ### 9.3 Collision Handling
 
 Collisions are expected, especially for:
-- Common names
+- Common names with same DOB
 - Family members with same DOB/address (e.g., twins)
 - Sr/Jr with overlapping identifiers
 
@@ -423,7 +497,12 @@ Test vectors are provided in `/test_vectors/emtp_v1_vectors.json`.
   "full_name": "MR. JRR Tolkien",
   "dob": "1892-01-03",
   "phones": ["(212) 555-0100"],
-  "addresses": ["20 Northmoor Rd, Oxford"]
+  "addresses": [{
+    "line1": "20 Northmoor Rd",
+    "city": "Oxford",
+    "state": "OX",
+    "postal_code": "OX2 6"
+  }]
 }
 ```
 
@@ -433,7 +512,7 @@ Test vectors are provided in `/test_vectors/emtp_v1_vectors.json`.
   "full_name": "J. R. R. Tolkien",
   "dob": "1892-01-03",
   "phones": ["+1-212-555-0100"],
-  "addresses": ["20 Northmoor Road Oxford"]
+  "addresses": ["20 NORTHMOOR ROAD, Oxford, OX2 6"]
 }
 ```
 
@@ -441,28 +520,29 @@ Test vectors are provided in `/test_vectors/emtp_v1_vectors.json`.
 
 | Field | Input A | Input B |
 |-------|---------|---------|
-| name_full | `jrr tolkien` | `j r r tolkien` |
-| dob | `1892-01-03` | `1892-01-03` |
-| phone_full | `2125550100` | `12125550100` |
-| phone_last10 | `2125550100` | `2125550100` |
-| address | `20 northmoor rd oxford` | `20 northmoor road oxford` |
+| NAME_FULL | `JRR TOLKIEN` | `J R R TOLKIEN` |
+| NAME_GIVEN_FAMILY | `JRR TOLKIEN` | `J TOLKIEN` |
+| NAME_INITIALS_FAMILY | `J R R TOLKIEN` | `J R R TOLKIEN` |
+| DOB | `1892-01-03` | `1892-01-03` |
+| PHONE_E164 | `+12125550100` | `+12125550100` |
+| PHONE_NATIONAL | `2125550100` | `2125550100` |
+| ADDR_LINE1_POSTAL | `20 NORTHMOOR RD\|OX2 6` | `20 NORTHMOOR RD\|OX2 6` |
 
 ### Shared Tuples
 
 Both inputs produce these tuples (among others):
 ```
-name=jrr tolkien|dob=1892-01-03
-name=jrr tolkien|dob=1892-01-03|phone=2125550100
+NAME=J R R TOLKIEN|DOB=1892-01-03
+NAME=J R R TOLKIEN|DOB=1892-01-03|PHONE=+12125550100
+NAME=JRR TOLKIEN|DOB=1892-01-03|ADDR=20 NORTHMOOR RD|OX2 6
 ```
-
-Note: Input B's name normalizes differently (`j r r tolkien`), but variant expansion generates `jrr tolkien` as a collapsed-initials variant, enabling the match.
 
 ### Token Generation
 
 With domain separation and key `k`:
 ```
-message = "emtp|v1|name=jrr tolkien|dob=1892-01-03"
-token = HMAC-SHA256(k, message)  // hex output
+message = "EMTP|v1|NAME=J R R TOLKIEN|DOB=1892-01-03"
+token = HMAC-SHA256(k, message)  // lowercase hex output
 ```
 
 Both inputs produce this shared token, enabling the match.
@@ -479,7 +559,7 @@ The reference implementation in `/reference/python/emtp.py`:
 
 Production implementations should additionally:
 - Handle edge cases (empty inputs, malformed data)
-- Implement full address abbreviation normalization
+- Implement full address parsing and abbreviation normalization
 - Support structured address input
 - Provide detailed error reporting
 - Optimize for performance at scale
@@ -488,11 +568,14 @@ Production implementations should additionally:
 
 ## Appendix C: Changelog
 
-### v1.0 (2026-01-19)
-- Consolidated from draft v0.3 and docs/spec.md
-- Clarified case normalization as lowercase (not uppercase)
-- Specified tuple format with labeled fields
+### v1.0 (2026-01-20)
+- Consolidated from draft v0.3 and alternative drafts
+- Standardized on UPPERCASE normalization
+- Added structured address support with variants
+- Added E.164 phone format support
+- Added "weak token" concept for missing DOB
+- Specified labeled tuple format with canonical field order
 - Added domain separation prefix requirement
 - Defined key manifest format
 - Added conformance requirements
-- Provided complete worked example
+- Provided complete worked example with structured addresses

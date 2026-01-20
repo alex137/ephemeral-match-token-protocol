@@ -17,7 +17,7 @@
     },
     "phones": {
       "type": "array",
-      "description": "Phone numbers in any format. Implementation normalizes to digits and generates variants per spec section 4.4.",
+      "description": "Phone numbers in any format. Implementation normalizes to E.164 per spec section 4.4.",
       "items": {
         "type": "string",
         "minLength": 1
@@ -25,10 +25,47 @@
     },
     "addresses": {
       "type": "array",
-      "description": "Postal addresses (free-form strings). Implementation normalizes and generates variants per spec section 4.5.",
+      "description": "Postal addresses (structured objects or free-form strings). Implementation normalizes and generates variants per spec section 4.5.",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Free-form address string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "description": "Structured address per spec section 3.3",
+            "properties": {
+              "line1": {
+                "type": "string",
+                "description": "Street address"
+              },
+              "line2": {
+                "type": "string",
+                "description": "Additional address line (apt, suite, etc.)"
+              },
+              "city": {
+                "type": "string",
+                "description": "City name"
+              },
+              "state": {
+                "type": "string",
+                "description": "State/province/region code"
+              },
+              "postal_code": {
+                "type": "string",
+                "description": "Postal/ZIP code"
+              },
+              "country": {
+                "type": "string",
+                "description": "ISO 3166-1 alpha-2 country code (default: US)",
+                "default": "US"
+              }
+            },
+            "required": ["line1", "city", "state", "postal_code"]
+          }
+        ]
       }
     },
     "idnos": {

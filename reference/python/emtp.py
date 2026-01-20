@@ -13,30 +13,44 @@ import hashlib
 import hmac
 import re
 import unicodedata
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Union
 
 # Domain separation prefix for EMTP v1
-DOMAIN_PREFIX = "emtp|v1|"
+DOMAIN_PREFIX = "EMTP|v1|"
 
 # Maximum tuples per person (per spec section 5.4)
 MAX_TUPLES = 256
 
-# Honorifics to remove (lowercase)
-HONORIFICS = {"mr", "mrs", "ms", "miss", "dr", "prof", "rev", "sir", "madam"}
+# Honorifics to remove (after uppercasing)
+HONORIFICS = {"MR", "MRS", "MS", "MISS", "DR", "PROF", "REV", "SIR", "MADAM"}
 
 # Suffixes to detect and normalize
 SUFFIX_MAP = {
-    "jr": "jr",
-    "junior": "jr",
-    "sr": "sr",
-    "senior": "sr",
-    "i": "i",
-    "ii": "ii",
-    "iii": "iii",
-    "iv": "iv",
-    "v": "v",
-    "vi": "vi",
+    "JR": "JR",
+    "JUNIOR": "JR",
+    "SR": "SR",
+    "SENIOR": "SR",
+    "I": "I",
+    "II": "II",
+    "III": "III",
+    "IV": "IV",
+    "V": "V",
+    "VI": "VI",
+}
+
+# Address abbreviations (bidirectional normalization)
+ADDR_ABBREVS = {
+    "STREET": "ST",
+    "AVENUE": "AVE",
+    "ROAD": "RD",
+    "BOULEVARD": "BLVD",
+    "DRIVE": "DR",
+    "LANE": "LN",
+    "COURT": "CT",
+    "PLACE": "PL",
+    "APARTMENT": "APT",
+    "SUITE": "STE",
 }
 
 
@@ -45,7 +59,7 @@ def normalize_string(s: str) -> str:
 
     1. Unicode normalize to NFKD
     2. Strip diacritics (remove combining characters)
-    3. Lowercase all ASCII characters
+    3. Uppercase all ASCII characters
     4. Replace all non-alphanumeric characters with a single space
     5. Collapse repeated whitespace to single space
     6. Trim leading and trailing whitespace
@@ -56,11 +70,11 @@ def normalize_string(s: str) -> str:
     # Strip diacritics (combining characters)
     s = "".join(c for c in s if not unicodedata.combining(c))
 
-    # Lowercase
-    s = s.lower()
+    # Uppercase
+    s = s.upper()
 
     # Replace non-alphanumeric with space
-    s = re.sub(r"[^a-z0-9]", " ", s)
+    s = re.sub(r"[^A-Z0-9]", " ", s)
 
     # Collapse whitespace and trim
     s = re.sub(r"\s+", " ", s).strip()
@@ -71,48 +85,56 @@ def normalize_string(s: str) -> str:
 @dataclass
 class ParsedName:
     """Parsed name components."""
-    first: str
+    given: str
     middles: List[str]
-    last: str
+    family: str
     suffix: str
 
     @property
     def full(self) -> str:
         """Full name without suffix."""
-        parts = [self.first] + self.middles + [self.last]
-        return " ".join(parts)
+        parts = [self.given] + self.middles + [self.family]
+        return " ".join(p for p in parts if p)
 
     @property
-    def first_last(self) -> str:
-        """First and last name only."""
-        return f"{self.first} {self.last}"
+    def given_family(self) -> str:
+        """Given and family name only."""
+        return f"{self.given} {self.family}".strip()
 
     @property
-    def first_last_suffix(self) -> str:
-        """First, last, and suffix."""
+    def given_family_suffix(self) -> str:
+        """Given, family, and suffix."""
         if self.suffix:
-            return f"{self.first} {self.last} {self.suffix}"
-        return self.first_last
+            return f"{self.given} {self.family} {self.suffix}".strip()
+        return self.given_family
 
     @property
-    def first_initial_last(self) -> str:
-        """First initial and last name."""
-        if self.first:
-            return f"{self.first[0]} {self.last}"
-        return self.last
+    def initials_family(self) -> str:
+        """All initials + family name."""
+        initials = [self.given[0]] if self.given else []
+        initials.extend(m[0] for m in self.middles if m)
+        return " ".join(initials + [self.family]).strip()
+
+    @property
+    def given_initial_family(self) -> str:
+        """Given + middle initials + family."""
+        parts = [self.given] if self.given else []
+        parts.extend(m[0] for m in self.middles if m)
+        parts.append(self.family)
+        return " ".join(p for p in parts if p)
 
 
 def normalize_name(name: str) -> ParsedName:
     """Normalize and parse a name per spec section 4.2.
 
-    Returns a ParsedName with first, middles, last, and suffix.
+    Returns a ParsedName with given, middles, family, and suffix.
     """
     # Apply general normalization
     name = normalize_string(name)
 
     tokens = name.split()
     if not tokens:
-        return ParsedName(first="", middles=[], last="", suffix="")
+        return ParsedName(given="", middles=[], family="", suffix="")
 
     # Remove leading honorific (unless name would become just one token)
     if len(tokens) > 2 and tokens[0] in HONORIFICS:
@@ -124,16 +146,16 @@ def normalize_name(name: str) -> ParsedName:
         suffix = SUFFIX_MAP[tokens[-1]]
         tokens = tokens[:-1]
 
-    # Parse into first/middles/last
+    # Parse into given/middles/family
     if len(tokens) == 0:
-        return ParsedName(first="", middles=[], last="", suffix=suffix)
+        return ParsedName(given="", middles=[], family="", suffix=suffix)
     elif len(tokens) == 1:
-        return ParsedName(first=tokens[0], middles=[], last=tokens[0], suffix=suffix)
+        return ParsedName(given=tokens[0], middles=[], family=tokens[0], suffix=suffix)
     else:
         return ParsedName(
-            first=tokens[0],
+            given=tokens[0],
             middles=tokens[1:-1],
-            last=tokens[-1],
+            family=tokens[-1],
             suffix=suffix
         )
 
@@ -161,54 +183,137 @@ def normalize_dob(dob: str) -> str:
     return dob
 
 
-def normalize_phone(phone: str) -> str:
-    """Normalize phone number per spec section 4.4.
+def normalize_phone(phone: str, default_country: str = "US") -> str:
+    """Normalize phone number to E.164 format per spec section 4.4.
 
-    Returns digit-only string, stripping US country code if present.
+    Returns E.164 format with + prefix.
     """
     # Extract digits only
     digits = re.sub(r"\D", "", phone)
 
-    # Strip leading 1 for 11-digit US numbers
-    if len(digits) == 11 and digits.startswith("1"):
-        digits = digits[1:]
+    if not digits:
+        return ""
+
+    # Handle US numbers
+    if default_country == "US":
+        if len(digits) == 11 and digits.startswith("1"):
+            return f"+{digits}"
+        elif len(digits) == 10:
+            return f"+1{digits}"
+
+    # If already has country code (starts with non-0, non-1 for international)
+    if len(digits) >= 10:
+        # Assume it might be international
+        return f"+{digits}"
 
     return digits
 
 
-def phone_variants(phone: str) -> List[str]:
+def phone_variants(phone: str, default_country: str = "US") -> Dict[str, str]:
     """Generate phone variants per spec section 4.4."""
-    normalized = normalize_phone(phone)
-    variants = [normalized]
+    e164 = normalize_phone(phone, default_country)
+    digits = re.sub(r"\D", "", phone)
+
+    variants = {}
+
+    if e164:
+        variants["PHONE_E164"] = e164
+
+    # National (without +country code)
+    if e164.startswith("+1") and len(e164) == 12:
+        variants["PHONE_NATIONAL"] = e164[2:]  # Remove +1
+    elif digits:
+        variants["PHONE_NATIONAL"] = digits
 
     # Last 10 digits
-    if len(normalized) >= 10:
-        last10 = normalized[-10:]
-        if last10 != normalized:
-            variants.append(last10)
+    if len(digits) >= 10:
+        variants["PHONE_LAST10"] = digits[-10:]
 
-    return list(set(variants))
+    return variants
 
 
-def normalize_address(address: str) -> str:
-    """Normalize address per spec section 4.5."""
-    return normalize_string(address)
+@dataclass
+class StructuredAddress:
+    """Structured address per spec section 3.3."""
+    line1: str
+    line2: str = ""
+    city: str = ""
+    state: str = ""
+    postal_code: str = ""
+    country: str = "US"
 
 
-def address_variants(address: str) -> List[str]:
+def parse_address(address: Union[str, dict]) -> StructuredAddress:
+    """Parse address from string or dict."""
+    if isinstance(address, dict):
+        return StructuredAddress(
+            line1=address.get("line1", ""),
+            line2=address.get("line2", ""),
+            city=address.get("city", ""),
+            state=address.get("state", ""),
+            postal_code=address.get("postal_code", ""),
+            country=address.get("country", "US"),
+        )
+
+    # Simple heuristic parsing for free-form addresses
+    normalized = normalize_string(address)
+    parts = [p.strip() for p in normalized.split(",") if p.strip()]
+
+    if len(parts) >= 3:
+        # Assume: line1, city, state/postal
+        line1 = parts[0]
+        city = parts[1] if len(parts) > 1 else ""
+        state_postal = parts[2] if len(parts) > 2 else ""
+        # Try to extract postal code (digits at end)
+        postal_match = re.search(r"([A-Z0-9]{2,})\s*$", state_postal)
+        postal_code = postal_match.group(1) if postal_match else ""
+        state = state_postal.replace(postal_code, "").strip() if postal_code else state_postal
+        return StructuredAddress(line1=line1, city=city, state=state, postal_code=postal_code)
+    elif len(parts) == 2:
+        return StructuredAddress(line1=parts[0], city=parts[1])
+    elif len(parts) == 1:
+        return StructuredAddress(line1=parts[0])
+
+    return StructuredAddress(line1=normalized)
+
+
+def normalize_address_component(s: str) -> str:
+    """Normalize address component with abbreviation handling."""
+    normalized = normalize_string(s)
+
+    # Apply abbreviations (expand to canonical short form)
+    for long_form, short_form in ADDR_ABBREVS.items():
+        normalized = re.sub(rf"\b{long_form}\b", short_form, normalized)
+
+    return normalized
+
+
+def address_variants(address: Union[str, dict]) -> Dict[str, str]:
     """Generate address variants per spec section 4.5."""
-    normalized = normalize_address(address)
-    variants = [normalized]
+    parsed = parse_address(address)
 
-    # Address without unit (split at apt/unit/#/ste)
-    no_unit = re.split(r"\b(apt|unit|ste)\b", normalized)[0].strip()
-    # Also handle # as unit designator
-    no_unit = re.split(r"\s+\d+\s*$", no_unit)[0].strip()
+    line1 = normalize_address_component(parsed.line1)
+    city = normalize_string(parsed.city)
+    state = normalize_string(parsed.state)
+    postal = normalize_string(parsed.postal_code)
 
-    if no_unit and no_unit != normalized:
-        variants.append(no_unit)
+    variants = {}
 
-    return list(set(variants))
+    if line1 and postal:
+        variants["ADDR_LINE1_POSTAL"] = f"{line1}|{postal}"
+
+    if line1 and city and state:
+        variants["ADDR_LINE1_CITY_STATE"] = f"{line1}|{city}|{state}"
+
+    if line1 and city and state and postal:
+        variants["ADDR_LINE1_CITY_STATE_POSTAL"] = f"{line1}|{city}|{state}|{postal}"
+
+    # Address without unit
+    no_unit = re.split(r"\b(APT|UNIT|STE)\b", line1)[0].strip()
+    if no_unit and no_unit != line1:
+        variants["ADDR_NO_UNIT"] = no_unit
+
+    return variants
 
 
 def normalize_idno(idno: str) -> List[str]:
@@ -235,14 +340,14 @@ def normalize_idno(idno: str) -> List[str]:
 def build_tuple(fields: Dict[str, str]) -> str:
     """Build a tuple string per spec section 5.1.
 
-    Fields are joined in canonical order: name, dob, phone, address, id
+    Fields are joined in canonical order: NAME, DOB, PHONE, ADDR, ID
     """
-    order = ["name", "dob", "phone", "address", "id"]
+    order = ["NAME", "DOB", "PHONE", "ADDR", "ID"]
     parts = []
 
-    for field in order:
-        if field in fields and fields[field]:
-            parts.append(f"{field}={fields[field]}")
+    for field_name in order:
+        if field_name in fields and fields[field_name]:
+            parts.append(f"{field_name}={fields[field_name]}")
 
     return "|".join(parts)
 
@@ -251,7 +356,7 @@ def generate_tuples(
     name: ParsedName,
     dob: str,
     phones: Optional[List[str]] = None,
-    addresses: Optional[List[str]] = None,
+    addresses: Optional[List[Union[str, dict]]] = None,
     idnos: Optional[List[str]] = None,
 ) -> List[str]:
     """Generate all tuple variants per spec section 5.2-5.4.
@@ -261,35 +366,35 @@ def generate_tuples(
     tuples: Set[str] = set()
 
     # Generate name variants
-    name_variants = set()
-    name_variants.add(name.full)
-    name_variants.add(name.first_last)
+    name_variants = {
+        "full": name.full,
+        "given_family": name.given_family,
+        "initials_family": name.initials_family,
+    }
     if name.suffix:
-        name_variants.add(name.first_last_suffix)
-    name_variants.add(name.first_initial_last)
+        name_variants["given_family_suffix"] = name.given_family_suffix
 
-    # Collapse initials variant (j r r -> jrr)
-    if name.middles:
-        initials = "".join([name.first[0]] + [m[0] for m in name.middles if m])
-        collapsed_initials = f"{initials} {name.last}"
-        name_variants.add(collapsed_initials)
+    # Add collapsed initials variant if there are middles
+    if name.middles and name.given:
+        collapsed = "".join([name.given[0]] + [m[0] for m in name.middles if m])
+        name_variants["collapsed_initials"] = f"{collapsed} {name.family}"
 
     # Remove empty variants
-    name_variants = {n for n in name_variants if n.strip()}
+    name_variants = {k: v for k, v in name_variants.items() if v.strip()}
 
     # Generate phone variants
-    phone_vars = []
+    phone_vars_list = []
     if phones:
         for p in phones:
-            phone_vars.extend(phone_variants(p))
-        phone_vars = list(set(phone_vars))
+            pvars = phone_variants(p)
+            phone_vars_list.append(pvars)
 
     # Generate address variants
-    addr_vars = []
+    addr_vars_list = []
     if addresses:
         for a in addresses:
-            addr_vars.extend(address_variants(a))
-        addr_vars = list(set(addr_vars))
+            avars = address_variants(a)
+            addr_vars_list.append(avars)
 
     # Generate ID variants
     id_vars = []
@@ -300,43 +405,65 @@ def generate_tuples(
 
     # Required tuple families (spec section 5.2)
 
-    # Name + DOB
-    for nv in name_variants:
-        tuples.add(build_tuple({"name": nv, "dob": dob}))
+    # Name + DOB tuples
+    for nv in name_variants.values():
+        tuples.add(build_tuple({"NAME": nv, "DOB": dob}))
 
-    # Phone + DOB
-    for pv in phone_vars:
-        tuples.add(build_tuple({"dob": dob, "phone": pv}))
+    # Phone + DOB tuples
+    for pvars in phone_vars_list:
+        for phone_type in ["PHONE_E164", "PHONE_LAST10"]:
+            if phone_type in pvars:
+                tuples.add(build_tuple({"DOB": dob, "PHONE": pvars[phone_type]}))
 
-    # Address + DOB
-    for av in addr_vars:
-        tuples.add(build_tuple({"dob": dob, "address": av}))
+    # Address + DOB tuples
+    for avars in addr_vars_list:
+        for addr_type in ["ADDR_LINE1_POSTAL", "ADDR_LINE1_CITY_STATE"]:
+            if addr_type in avars:
+                tuples.add(build_tuple({"DOB": dob, "ADDR": avars[addr_type]}))
 
-    # Name + DOB + Phone
-    for nv in name_variants:
-        for pv in phone_vars:
-            tuples.add(build_tuple({"name": nv, "dob": dob, "phone": pv}))
+    # Combined: Name + DOB + Phone
+    for nv in name_variants.values():
+        for pvars in phone_vars_list:
+            for phone_type in ["PHONE_E164", "PHONE_NATIONAL"]:
+                if phone_type in pvars:
+                    tuples.add(build_tuple({
+                        "NAME": nv,
+                        "DOB": dob,
+                        "PHONE": pvars[phone_type]
+                    }))
 
-    # Name + DOB + Address
-    for nv in name_variants:
-        for av in addr_vars:
-            tuples.add(build_tuple({"name": nv, "dob": dob, "address": av}))
+    # Combined: Name + DOB + Address
+    for nv in name_variants.values():
+        for avars in addr_vars_list:
+            for addr_type in ["ADDR_LINE1_POSTAL", "ADDR_LINE1_CITY_STATE"]:
+                if addr_type in avars:
+                    tuples.add(build_tuple({
+                        "NAME": nv,
+                        "DOB": dob,
+                        "ADDR": avars[addr_type]
+                    }))
 
     # Optional tuple families with ID (spec section 5.3)
     if id_vars:
         # Name + DOB + ID
-        for nv in name_variants:
-            for iv in id_vars:
-                tuples.add(build_tuple({"name": nv, "dob": dob, "id": iv}))
+        for nv in [name_variants.get("given_family", name.given_family)]:
+            if nv:
+                for iv in id_vars:
+                    tuples.add(build_tuple({"NAME": nv, "DOB": dob, "ID": iv}))
 
         # DOB + ID
         for iv in id_vars:
-            tuples.add(build_tuple({"dob": dob, "id": iv}))
+            tuples.add(build_tuple({"DOB": dob, "ID": iv}))
 
         # Phone + DOB + ID
-        for pv in phone_vars:
-            for iv in id_vars:
-                tuples.add(build_tuple({"dob": dob, "phone": pv, "id": iv}))
+        for pvars in phone_vars_list:
+            if "PHONE_LAST10" in pvars:
+                for iv in id_vars:
+                    tuples.add(build_tuple({
+                        "DOB": dob,
+                        "PHONE": pvars["PHONE_LAST10"],
+                        "ID": iv
+                    }))
 
     # Cap at MAX_TUPLES
     result = sorted(tuples)[:MAX_TUPLES]
@@ -370,7 +497,7 @@ def process_record(
     full_name: str,
     dob: str,
     phones: Optional[List[str]] = None,
-    addresses: Optional[List[str]] = None,
+    addresses: Optional[List[Union[str, dict]]] = None,
     idnos: Optional[List[str]] = None,
     keys: Optional[List[bytes]] = None,
 ) -> Dict:
@@ -393,11 +520,13 @@ def process_record(
 
     result = {
         "normalized_name": {
-            "first": parsed_name.first,
+            "given": parsed_name.given,
             "middles": parsed_name.middles,
-            "last": parsed_name.last,
+            "family": parsed_name.family,
             "suffix": parsed_name.suffix,
             "full": parsed_name.full,
+            "given_family": parsed_name.given_family,
+            "initials_family": parsed_name.initials_family,
         },
         "normalized_dob": normalized_dob,
         "tuples": tuples,
@@ -434,7 +563,12 @@ if __name__ == "__main__":
         full_name="MR. JRR Tolkien",
         dob="1892-01-03",
         phones=["(212) 555-0100"],
-        addresses=["20 Northmoor Rd, Oxford"],
+        addresses=[{
+            "line1": "20 Northmoor Rd",
+            "city": "Oxford",
+            "state": "OX",
+            "postal_code": "OX2 6"
+        }],
         keys=[test_key],
     )
 
@@ -450,11 +584,9 @@ if __name__ == "__main__":
         print(f"  {t}")
 
     # Verify test vector
-    test_tuple = "name=jrr tolkien|dob=1892-01-03"
+    test_tuple = "NAME=JRR TOLKIEN|DOB=1892-01-03"
     test_token = compute_token(test_key, test_tuple)
     print(f"\nTest vector verification:")
     print(f"  Tuple: {test_tuple}")
+    print(f"  Message: {DOMAIN_PREFIX}{test_tuple}")
     print(f"  Token: {test_token}")
-    expected = "17d878e5adfb971b9aad5c15b0aa85fbdd74605a4809423bb3cc41399d2ac427"
-    print(f"  Expected: {expected}")
-    print(f"  Match: {test_token == expected}")
