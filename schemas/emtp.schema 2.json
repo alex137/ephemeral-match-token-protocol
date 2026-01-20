@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EMTP Input Schema",
+  "type": "object",
+  "properties": {
+    "full_name": {
+      "type": "string",
+      "description": "Raw full name string; implementation normalizes, strips honorifics, parses suffix."
+    },
+    "dob": {
+      "type": "string",
+      "description": "Date of birth in YYYY-MM-DD or other parseable format (implementation must normalize)."
+    },
+    "phones": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Phone strings; implementation normalizes to E.164 where possible."
+    },
+    "addresses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Free-text addresses; implementation generates variants."
+    },
+    "idnos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Identifier number fragments; implementation extracts last4/last5/last6 digits tokens."
+    }
+  },
+  "required": [
+    "full_name",
+    "dob"
+  ]
+}
